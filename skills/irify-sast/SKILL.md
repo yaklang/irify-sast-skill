@@ -9,6 +9,8 @@ description: >
 allowed-tools:
   - mcp__yaklang-ssa__ssa_compile
   - mcp__yaklang-ssa__ssa_query
+  - mcp__yaklang-ssa__ssa_list_includes
+  - mcp__yaklang-ssa__ssa_list_rules
   - Read
   - Glob
   - Grep
@@ -36,12 +38,14 @@ args = ["mcp", "-t", "ssa"]
 
 ## Workflow
 
-### Step 1: Compile (once per project)
+### Step 1: Compile (once per project, auto-cached)
 
 ```
 ssa_compile(target="/path/to/project", language="java", program_name="MyProject")
 → full compilation, returns program_name
 ```
+
+**Auto Cache**: If the program was already compiled and source files haven't changed, the engine returns `[Cache Hit]` instantly (milliseconds) — no recompilation happens. Always provide a `program_name` to enable caching.
 
 ### Step 2: Query (unlimited, no recompile needed)
 
@@ -160,16 +164,30 @@ After running a query and finding results, **proactively** raise follow-up quest
 
 This skill includes detailed reference documents. **Read them when needed** using the `Read` tool:
 
+### MCP Tools for Discovery
+
+Use these tools to dynamically discover available rules — they always reflect the latest installed rules:
+
+| Tool | Purpose | Example |
+|---|---|---|
+| `ssa_list_includes` | List all `<include('name')>` lib rules (sources, sinks, filters) | `ssa_list_includes(language="java")` |
+| `ssa_list_rules` | List all built-in vulnerability detection rules | `ssa_list_rules(language="java", keyword="sql")` |
+
+**Always call these tools first** before writing a SyntaxFlow rule to find existing building blocks.
+
+### Companion Reference Files
+
+For syntax and patterns, read these files using the `Read` tool:
+
 | File | When to Read | Path (relative to this file) |
 |---|---|---|
-| **Built-in Rules** | When writing rules — lists all 71 `<include('name')>` lib rules by language, with descriptions. **Read this first** to find existing source/sink/filter rules you can reuse | `builtin-rules.md` |
-| **NativeCall Reference** | When writing rules that need `<nativeCallName()>` functions — contains all 40+ NativeCall functions with syntax, parameters, and examples | `nativecall-reference.md` |
-| **SyntaxFlow Examples** | When writing new rules — contains 20+ production rules from IRify's built-in library covering Java/Go/PHP/C, organized by vulnerability type | `syntaxflow-examples.md` |
+| **NativeCall Reference** | When writing rules that need `<nativeCallName()>` functions — all 40+ NativeCall functions with syntax and examples | `nativecall-reference.md` |
+| **SyntaxFlow Examples** | When writing new rules — 20+ production rules covering Java/Go/PHP/C, organized by vulnerability type | `syntaxflow-examples.md` |
 
-**How to use**: Before writing a SyntaxFlow rule, read the relevant companion files:
-- Need to detect SQL injection? → Read `builtin-rules.md` to find include names, then `syntaxflow-examples.md` for rule patterns
-- Need `<getMembers>` or `<typeName>`? → Read `nativecall-reference.md` for function details
-- Need to know what sources/sinks exist for a language? → Read `builtin-rules.md`
+**Workflow**: 
+1. Call `ssa_list_includes(language="java")` to find available source/sink/filter includes
+2. Read `syntaxflow-examples.md` to find a similar rule pattern
+3. Need a NativeCall? Read `nativecall-reference.md`
 
 ## SyntaxFlow Quick Reference
 
