@@ -9,7 +9,6 @@ description: >
 allowed-tools:
   - mcp__yaklang-ssa__ssa_compile
   - mcp__yaklang-ssa__ssa_query
-  - mcp__yaklang-ssa__ssa_list_includes
   - mcp__yaklang-ssa__ssa_list_rules
   - Read
   - Glob
@@ -47,13 +46,38 @@ ssa_compile(target="/path/to/project", language="java", program_name="MyProject"
 
 **Auto Cache**: If the program was already compiled and source files haven't changed, the engine returns `[Cache Hit]` instantly (milliseconds) — no recompilation happens. Always provide a `program_name` to enable caching.
 
-### Step 2: Query (unlimited, no recompile needed)
+### Step 2: Discover Rules (MUST do before writing any rule)
+
+**CRITICAL: DO NOT write SyntaxFlow rules from scratch. Always check existing rules first.**
+
+**2a. Check built-in detection rules** — execute directly by rule_id:
+```
+ssa_list_rules(group="java", keyword="exec")
+→ returns rule_id for each matching rule
+→ execute: ssa_query(program_name="MyProject", rule_id="<rule_id>")
+```
+
+**2b. Check lib rules** — reusable building blocks for composing new rules:
+```
+ssa_list_rules(group="java", lib="lib", keyword="sql")
+→ returns included_name for each lib rule
+→ use in custom rule: <include('included_name')> as $var;
+```
+
+**Decision flow:**
+1. User asks "check for SQL injection" → call `ssa_list_rules(group="java", keyword="sql")` first
+2. If a built-in rule covers it → execute directly via `ssa_query(rule_id="...")`
+3. If no exact match → call `ssa_list_rules(group="java", lib="lib")` to find source/sink/filter building blocks
+4. Compose a new rule using `<include('...')>` — **never hardcode source/sink patterns manually when a lib rule exists**
+5. Only write fully custom rules when no built-in rules or lib rules are available
+
+### Step 3: Query (unlimited, no recompile needed)
 
 ```
 ssa_query(program_name="MyProject", rule="<SyntaxFlow rule>")
 ```
 
-### Step 3: Code Changed — Incremental Compile
+### Step 4: Code Changed — Incremental Compile
 
 ```
 ssa_compile(target="/path/to/project", language="java", base_program_name="MyProject")
@@ -63,7 +87,7 @@ ssa_compile(target="/path/to/project", language="java", base_program_name="MyPro
 
 **IMPORTANT**: Use `base_program_name` for incremental compilation. `re_compile=true` is a full recompile that discards all data — only use it to start completely fresh.
 
-### Step 4: Self-Healing Query (auto-retry on syntax error)
+### Step 5: Self-Healing Query (auto-retry on syntax error)
 
 When `ssa_query` returns a SyntaxFlow parsing error:
 1. **DO NOT** apologize to the user or ask for help
@@ -164,16 +188,19 @@ After running a query and finding results, **proactively** raise follow-up quest
 
 This skill includes detailed reference documents. **Read them when needed** using the `Read` tool:
 
-### MCP Tools for Discovery
+### Rule Discovery via `ssa_list_rules`
 
-Use these tools to dynamically discover available rules — they always reflect the latest installed rules:
+One tool for all rule discovery — use `group` and `lib` parameters to filter:
 
-| Tool | Purpose | Example |
-|---|---|---|
-| `ssa_list_includes` | List all `<include('name')>` lib rules (sources, sinks, filters) | `ssa_list_includes(language="java")` |
-| `ssa_list_rules` | List all built-in vulnerability detection rules | `ssa_list_rules(language="java", keyword="sql")` |
+| Goal | Command |
+|---|---|
+| List Java detection rules | `ssa_list_rules(group="java")` |
+| Search for SQL injection rules | `ssa_list_rules(group="java", keyword="sql")` |
+| List Java lib rules (for `<include>`) | `ssa_list_rules(group="java", lib="lib")` |
+| List all high-severity rules | `ssa_list_rules(group="high")` |
+| List all rules (both lib + detection) | `ssa_list_rules(lib="")` |
 
-**Always call these tools first** before writing a SyntaxFlow rule to find existing building blocks.
+**Always call `ssa_list_rules` first** before writing a SyntaxFlow rule.
 
 ### Companion Reference Files
 
@@ -185,7 +212,7 @@ For syntax and patterns, read these files using the `Read` tool:
 | **SyntaxFlow Examples** | When writing new rules — 20+ production rules covering Java/Go/PHP/C, organized by vulnerability type | `syntaxflow-examples.md` |
 
 **Workflow**: 
-1. Call `ssa_list_includes(language="java")` to find available source/sink/filter includes
+1. Call `ssa_list_rules(group="java", lib="lib")` to find available source/sink/filter lib rules
 2. Read `syntaxflow-examples.md` to find a similar rule pattern
 3. Need a NativeCall? Read `nativecall-reference.md`
 
