@@ -10,8 +10,6 @@ allowed-tools:
   - mcp__yaklang-ssa__ssa_compile
   - mcp__yaklang-ssa__ssa_query
   - Read
-  - Glob
-  - Grep
 ---
 
 # IRify SAST
@@ -73,65 +71,48 @@ When `ssa_query` returns a SyntaxFlow parsing error:
 
 This is critical — SyntaxFlow has strict syntax and minor mistakes (missing semicolons, wrong operator) are common. The agent should self-correct silently.
 
-## When to Use
+## Critical: Follow User Intent
 
-| Scenario | Tool |
-|---|---|
-| Data flow: "where does user input go?" | **IRify (SSA + SyntaxFlow)** |
-| Cross-procedure taint tracking | **IRify (SSA + SyntaxFlow)** |
-| Vulnerability detection (SQLi, RCE, XXE) | **IRify (SSA + SyntaxFlow)** |
-| Simple text search | grep |
-| Go-to-definition, find-references | LSP |
+**DO NOT** automatically construct source→sink vulnerability rules unless the user explicitly asks for vulnerability detection.
 
-## Data Flow Visualization
+- User asks "find user inputs" → write a **source-only** rule, list all input endpoints
+- User asks "find SQL injection" → write a **source→sink** taint rule
+- User asks "where does this value go" → write a **forward trace** (`-->`) rule
+- User asks "what calls this function" → write a **call-site** rule
 
-After obtaining query results, present data flow paths visually to the user.
+**NEVER** fall back to grep/rg for code analysis. Always use `ssa_compile` + `ssa_query` with SyntaxFlow. SyntaxFlow operates on SSA IR and understands cross-procedure data flow — grep cannot do this.
 
-### Default View: Source → Sink Summary
+### Source-Only Query Examples (Java)
 
-Show a clean summary first — one line per taint path, no noise:
+When the user asks about user inputs, HTTP endpoints, or controllable parameters:
 
-```
-🔴 Taint Path #1
-   Source: request.getParameter("cmd")        → CommandController.java:42
-   Sink:   Runtime.getRuntime().exec(cmd)     → CommandController.java:97
-
-🔴 Taint Path #2
-   Source: request.getParameter("query")      → UserDAO.java:15
-   Sink:   stmt.executeQuery(sql)             → UserDAO.java:38
+```syntaxflow
+// Find all Spring MVC controller handler methods
+*Mapping.__ref__?{opcode: function} as $endpoints;
+alert $endpoints;
 ```
 
-Rules:
-- Show **Source** (where data enters) and **Sink** (where data is consumed dangerously)
-- Include **file:line** for each
-- If >5 paths, group by sink type and show count: `"exec() — 3 paths, executeQuery() — 2 paths"`
-- Omit intermediate nodes by default
-
-### Progressive Disclosure: Expand on Request
-
-When the user asks for details on a specific path (e.g. "show me path #1"), expand to full trace:
-
-```
-🔴 Taint Path #1 — Full Trace
-
-   ① [SOURCE]  request.getParameter("cmd")          CommandController.java:42
-       ↓
-   ② [ASSIGN]  String cmd = request.getParameter..   CommandController.java:42
-       ↓
-   ③ [CALL]    processCommand(cmd)                   CommandController.java:45
-       ↓
-   ④ [PARAM]   processCommand(String input)          CommandService.java:12
-       ↓
-   ⑤ [CALL]    Runtime.getRuntime().exec(input)      CommandService.java:18
-       ↓
-   ⑥ [SINK]    exec(input)                           CommandService.java:18
+```syntaxflow
+// Find all user-controllable parameters in Spring controllers
+*Mapping.__ref__?{opcode: function}<getFormalParams>?{opcode: param && !have: this} as $params;
+alert $params;
 ```
 
-Rules:
-- Number each step
-- Tag each node: `[SOURCE]`, `[ASSIGN]`, `[CALL]`, `[PARAM]`, `[SINK]`
-- Show cross-procedure jumps clearly (file changes)
-- If the trace is >10 steps, collapse middle steps with `... (3 intermediate steps)` and offer to expand
+```syntaxflow
+// Find GetMapping vs PostMapping endpoints separately
+GetMapping.__ref__?{opcode: function} as $getEndpoints;
+PostMapping.__ref__?{opcode: function} as $postEndpoints;
+alert $getEndpoints;
+alert $postEndpoints;
+```
+
+### Source→Sink Query Examples (only when user asks for vulnerability detection)
+
+```syntaxflow
+// RCE: trace user input to exec()
+Runtime.getRuntime().exec(* #-> * as $source) as $sink;
+alert $sink for {title: "RCE", level: "high"};
+```
 
 ## Proactive Security Insights
 
@@ -159,10 +140,6 @@ After running a query and finding results, **proactively** raise follow-up quest
 1. Ask for clarification: "I found 8 data flow paths to `executeQuery()`, but 5 use parameterized queries (safe). Want me to filter to only the 3 using string concatenation?"
 
 ## Companion Reference Files
-
-This skill includes detailed reference documents. **Read them when needed** using the `Read` tool:
-
-### Companion Reference Files
 
 When writing SyntaxFlow rules, read these files using the `Read` tool for syntax help and real-world examples:
 
