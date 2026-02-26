@@ -34,7 +34,9 @@ args = ["mcp", "-t", "ssa"]
 { "command": "yak", "args": ["mcp", "-t", "ssa"] }
 ```
 
-## Workflow
+## Workflow: Engine-First (sf → read → rg)
+
+**CRITICAL**: Always follow the **Engine-First** funnel model. The SSA engine sees cross-procedure data flow across all files simultaneously — grep cannot. Do NOT use grep/rg to build a "candidate file pool" before querying. Instead, let the engine be your radar first.
 
 ### Step 1: Compile (once per project, auto-cached)
 
@@ -43,15 +45,32 @@ ssa_compile(target="/path/to/project", language="java", program_name="MyProject"
 → full compilation, returns program_name
 ```
 
-**Auto Cache**: If the program was already compiled and source files haven't changed, the engine returns `[Cache Hit]` instantly (milliseconds) — no recompilation happens. Always provide a `program_name` to enable caching.
+**Auto Cache**: If the program was already compiled and source files haven't changed, the engine returns `[Cache Hit]` instantly — no recompilation. Always provide a `program_name` to enable caching.
 
-### Step 2: Query (unlimited, no recompile needed)
+### Step 2: Query — use SyntaxFlow as the global radar
+
+Directly compose and execute SyntaxFlow rules against the compiled IR. Do NOT pre-scan with grep to find candidates.
 
 ```
 ssa_query(program_name="MyProject", rule="<SyntaxFlow rule>")
 ```
 
-### Step 3: Code Changed — Incremental Compile
+The engine traverses the entire SSA graph in memory, crossing all file boundaries. One query covers what would take dozens of grep commands, with zero false positives on data flow.
+
+### Step 3: Read — use Read as the microscope
+
+After `ssa_query` returns concrete file paths and line numbers, use `Read` to examine surrounding context (±20 lines). Verify whether the hit is real business code or dead/test code.
+
+### Step 4: Grep — use Grep/Glob only for non-code files
+
+Use Grep/Glob **only** for content that the SSA engine does not process:
+- Configuration files (`.yml`, `.xml`, `.properties`, `logback.xml`)
+- Static resources, templates, build scripts
+- Quick name/path lookups when you already know the exact string
+
+**NEVER** use Grep to search for data flow patterns in source code — that is what `ssa_query` is for.
+
+### Incremental Compile (when code changes)
 
 ```
 ssa_compile(target="/path/to/project", language="java", base_program_name="MyProject")
@@ -61,17 +80,15 @@ ssa_compile(target="/path/to/project", language="java", base_program_name="MyPro
 
 **IMPORTANT**: Use `base_program_name` for incremental compilation. `re_compile=true` is a full recompile that discards all data — only use it to start completely fresh.
 
-### Step 4: Self-Healing Query (auto-retry on syntax error)
+### Self-Healing Query (auto-retry on syntax error)
 
 When `ssa_query` returns a SyntaxFlow parsing error:
 1. **DO NOT** apologize to the user or ask for help
-2. Read the error message carefully — it contains the exact parse error position and expected tokens
+2. Read the error message — it contains the exact parse error position and expected tokens
 3. Fix the SyntaxFlow rule based on the error
 4. Re-invoke `ssa_query` with the corrected rule
-5. Repeat up to **3 times** before reporting failure to the user
+5. Repeat up to **3 times** before reporting failure
 6. If all retries fail, show the user: the original rule, each attempted fix, and the final error
-
-This is critical — SyntaxFlow has strict syntax and minor mistakes (missing semicolons, wrong operator) are common. The agent should self-correct silently.
 
 ## Critical: Follow User Intent
 
@@ -81,8 +98,6 @@ This is critical — SyntaxFlow has strict syntax and minor mistakes (missing se
 - User asks "find SQL injection" → write a **source→sink** taint rule
 - User asks "where does this value go" → write a **forward trace** (`-->`) rule
 - User asks "what calls this function" → write a **call-site** rule
-
-**NEVER** fall back to grep/rg for code analysis. Always use `ssa_compile` + `ssa_query` with SyntaxFlow. SyntaxFlow operates on SSA IR and understands cross-procedure data flow — grep cannot do this.
 
 ### Source-Only Query Examples (Java)
 
@@ -115,6 +130,17 @@ alert $postEndpoints;
 Runtime.getRuntime().exec(* #-> * as $source) as $sink;
 alert $sink for {title: "RCE", level: "high"};
 ```
+
+```syntaxflow
+// SQL Injection (MyBatis): detect ${} unsafe interpolation in XML mappers / annotations
+// <mybatisSink> is a dedicated NativeCall that finds all MyBatis ${} injection points
+<mybatisSink> as $sink;
+$sink#{
+    until: `* & $source`,
+}-> as $result;
+alert $result for {title: "SQLi-MyBatis", level: "high"};
+```
+
 
 ## Proactive Security Insights
 
