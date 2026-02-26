@@ -10,6 +10,8 @@ allowed-tools:
   - mcp__yaklang-ssa__ssa_compile
   - mcp__yaklang-ssa__ssa_query
   - Read
+  - Glob
+  - Grep
 ---
 
 # IRify SAST
